@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<project name="message-service" default="package">
+	<description>
+		Messaging service
+	</description>
+
+	<property name="build.dir" value="build"/>
+	<property name="src.dir" value="src"/>
+	<property name="tests.dir" value="tests"/>
+	<property name="testing.dir" value="testing"/>
+	<property name="jlib.dir" value="jlib"/>
+
+	<path id="common.class.path">
+		<pathelement location="${build.dir}/common"/>
+		<fileset dir="lib">
+			<include name="*.jar"/>
+		</fileset>
+	</path>
+	
+	<path id="testing.class.path">
+		<path refid="common.class.path"/>
+		<pathelement location="${build.dir}/common"/>
+		<pathelement location="${build.dir}/client"/>
+		<pathelement location="${build.dir}/server"/>	
+	</path>
+
+	<target name="init">
+		<mkdir dir="${build.dir}"/>
+		<mkdir dir="${build.dir}/server"/>
+		<mkdir dir="${build.dir}/client"/>
+		<mkdir dir="${build.dir}/common"/>
+		<mkdir dir="${testing.dir}"/>
+		<mkdir dir="${testing.dir}/server"/>
+		<mkdir dir="${testing.dir}/client"/>
+		<mkdir dir="${testing.dir}/common"/>
+		<mkdir dir="${jlib.dir}"/>
+	</target>
+
+	<target name="package" depends="package-server, package-client, package-common">
+	</target>
+
+	<target name="package-server" depends="compile-server, test-server">
+		<jar destfile="${jlib.dir}/server.jar">
+			<fileset dir="${build.dir}/server" includes="**/*.class"/>
+		</jar>
+	</target>
+
+	<target name="package-client" depends="compile-client, test-client">
+		<jar destfile="${jlib.dir}/client.jar">
+			<fileset dir="${build.dir}/client" includes="**/*.class"/>
+		</jar>
+	</target>
+
+	<target name="package-common" depends="compile-common, test-common">
+		<jar destfile="${jlib.dir}/common.jar">
+			<fileset dir="${build.dir}/common" includes="**/*.class"/>
+		</jar>
+	</target>
+
+	<target name="compile-server" depends="compile-common">
+		<javac destdir="${build.dir}/server" includes="**/*.java" includeAntRuntime="false" debug="true" debuglevel="lines, vars, source" encoding="UTF-8">
+			<src path="${src.dir}/server"/>
+			<classpath refid="common.class.path"/>
+		</javac>
+	</target>
+	
+	<target name="compile-server-tests" depends="compile-server, compile-common, compile-client">
+		<javac destdir="${testing.dir}/server" includes="**/*.java" includeantruntime="false" debug="true" debuglevel="lines, vars, source" encoding="UTF-8">
+			<src path="${tests.dir}/server"/>
+			<classpath refid="common.class.path"/>
+			<classpath path="${build.dir}/client/"/>
+			<classpath path="${build.dir}/server/"/>
+		</javac>
+	</target>	
+
+	<target name="compile-client" depends="compile-common">
+		<javac destdir="${build.dir}/client" includes="**/*.java" includeAntRuntime="false" debug="true" debuglevel="lines, vars, source" encoding="UTF-8">
+			<src path="${src.dir}/client"/>
+			<classpath refid="common.class.path"/>
+		</javac>
+	</target>
+	
+	<target name="compile-client-tests" depends="compile-client, compile-common, compile-server">
+		<javac destdir="${testing.dir}/client" includes="**/*.java" includeantruntime="false" debug="true" debuglevel="lines, vars, source" encoding="UTF-8">
+			<src path="${tests.dir}/client"/>
+			<classpath refid="common.class.path"/>
+			<classpath path="${build.dir}/client/"/>
+			<classpath path="${build.dir}/server/"/>
+		</javac>
+	</target>
+
+	<target name="compile-common" depends="init">
+		<javac destdir="${build.dir}/common" includes="**/*.java" includeAntRuntime="false" debug="true" debuglevel="lines, vars, source" encoding="UTF-8">
+			<src path="${src.dir}/common"/>
+		</javac>
+	</target>
+
+	<target name="compile-common-tests" depends="compile-common">
+		<javac destdir="${testing.dir}/common" includes="**/*.java" includeantruntime="false" debug="true" debuglevel="lines, vars, source" encoding="UTF-8">
+			<src path="${tests.dir}/common"/>
+			<classpath refid="common.class.path"/>
+		</javac>
+	</target>
+
+	<!--
+	Da bi ovi testovi radili, potrebno je iskopirati junit-4.1.jar u direktorij
+	[Eclipse]\plugins\org.apache.ant_1.6.5\lib i promijeniti mu ime u junit.jar.
+	Zatim je potreno ga dodati preko Eclipsea na način
+	Window->Preferences->Ant->Runtime->Ant Home entries pa onda kliknuti na
+	Add External JAR i dodati junit.jar
+	-->
+	<target name="test-common" depends="compile-common-tests, compile-common">
+		<junit fork="yes" forkmode="once" haltonfailure="yes">
+						
+			<classpath>
+				<path refid="testing.class.path"/>
+				<pathelement location="${testing.dir}/common"/>
+			</classpath>
+			
+			<formatter type="plain" usefile="false"/>
+			
+			<batchtest>
+				<fileset dir="${tests.dir}/common">
+					<include name="**/*.java"/>
+				</fileset>
+			</batchtest>
+		</junit>
+	</target>
+	
+	<target name="test-client" depends="compile-client-tests, compile-client, compile-server">
+		<junit fork="yes" forkmode="once" haltonfailure="yes">
+			
+			<classpath>
+				<path refid="testing.class.path"/>
+				<pathelement location="${testing.dir}/client"/>
+			</classpath>
+			
+			<formatter type="plain" usefile="false"/>
+			
+			<batchtest>
+				<fileset dir="${tests.dir}/client">
+					<include name="**/*.java"/>
+				</fileset>
+			</batchtest>
+		</junit>
+	</target>
+	
+	<target name="test-server" depends="compile-server-tests, compile-server, compile-client">
+		<junit fork="yes" forkmode="once" haltonfailure="yes">
+			
+			<classpath>
+				<path refid="testing.class.path"/>
+				<pathelement location="${testing.dir}/server"/>
+			</classpath>
+			
+			<formatter type="plain" usefile="false"/>
+			
+			<batchtest>
+				<fileset dir="${tests.dir}/server">
+					<include name="**/*.java"/>
+				</fileset>
+			</batchtest>
+		</junit>
+	</target>
+
+	<target name="clean">
+		<delete dir="${build.dir}" quiet="true"/>
+		<delete dir="${testing.dir}" quiet="true"/>
+	</target>
+</project>

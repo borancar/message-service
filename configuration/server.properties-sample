@@ -1,0 +1,8 @@
+listen.address = 0.0.0.0
+listen.port = 4000
+packet.size = 512
+buffer.timeout = 1000
+buffer.size = 3
+socket.timeout = 2000
+dispatcher.timeout = 4000
+dispatcher.retries = 3

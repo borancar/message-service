@@ -1,0 +1,507 @@
+package hr.fer.zemris.java.nescume.messages.server;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Queue;
+
+import hr.fer.zemris.java.nescume.messages.Address;
+import hr.fer.zemris.java.nescume.messages.Message;
+import hr.fer.zemris.java.nescume.messages.server.exceptions.ServerCannotStart;
+import hr.fer.zemris.java.nescume.messages.server.exceptions.ServerCrashed;
+
+/**
+ * Implemetacija servera koji komunicira s klijentima preko socketa.
+ */
+public class SocketMessageServer implements IMessageServer {
+
+	/**
+	 * Mapiranje adresa u opsluživače klijenata, služi kod razmjene poruka među klijentima.
+	 */
+	private Map<Address, ClientHandler> clients = Collections.synchronizedMap(new HashMap<Address, ClientHandler>());
+	
+	/**
+	 * Klasa iz koje se stvaraju objekti koji opslužuju klijente. Svi opsluživači se trebaju
+	 * vrtiti u svojim dretvama.
+	 */
+	private class ClientHandler extends Thread {
+		
+		/**
+		 * Pošiljatelj poruka. Dio opsluživača namijenjen slanju poruka klijentu kojeg ovaj
+		 * opsluživač obrađuje. Svaki pošiljatelj zakačen je na svoj izlazi kanal i svaki
+		 * radi u svojoj dretvi.
+		 */
+		private class Sender implements Runnable {
+			
+			/**
+			 * Izlazni kanal pošiljatelja.
+			 */
+			private OutputStream output;
+			
+			/**
+			 * Flusher koji se brine da poruke u bufferu sigurno budu odaslane nakon nekog
+			 * vremena (bufferTimeout), ako nisu urgent.
+			 */
+			private class Flusher implements Runnable {
+				
+				public void run() {
+					while(active) {
+						try {
+							synchronized(flushers) {
+								while(!timeout) {
+									flushers.wait();
+								}
+							}
+							
+							if(!active) break;
+							
+							Thread.sleep(bufferTimeout);
+								
+							synchronized(output) {
+								// DebugStart
+								System.out.println("Flushing!!!");
+								// DebugEnd
+								output.flush();
+								timeout = false;
+							}
+						} catch(InterruptedException ignorable) {
+							
+						} catch (IOException e) {
+							break;
+						}
+					}
+				}
+			}
+			
+			/**
+			 * Konstruktor koji stvara novog pošiljatelja i spaja ga na izlazni kanal.
+			 * @param output izlazni kanal
+			 */
+			public Sender(OutputStream output) {
+				this.output = new BufferedOutputStream(output, packetSize);
+				
+				new Thread(new Flusher()).start();
+			}
+			
+			/**
+			 * Metoda obavlja posao pošiljatelja, šalje klijentu kojeg obrađivač obrađuje
+			 * sve poruke koje čekaju u njegovom redu poruka.
+			 */
+			public void run() {
+				try {
+					while(active) {
+						Message toSend = null;
+						
+						synchronized(senders) {
+							while(messages.isEmpty()) {
+								try {
+									timeout = false;
+									senders.wait(bufferTimeout);
+									if(!active) break;
+								} catch (InterruptedException ignorable) {
+	
+								}
+							}
+							if(!active) break;
+							toSend = messages.remove();
+						}
+						
+						synchronized(output) {
+							toSend.toStream(output);
+	
+							if(toSend.isUrgent()) {
+								output.flush();
+							}
+						}
+					}
+				} catch (IOException e) {
+					return;
+				} finally {
+					try {
+						output.close();
+					} catch (IOException ignorable) {
+
+					}
+				}
+			}
+		}
+		
+		/**
+		 * Primatelj. Dio opsluživača namijenjen primanju poruka od klijenta i obrađivanju
+		 * istih. Svaki primatelj zakačen je na svoj ulazni kanal i svaki radi u svojoj
+		 * dretvi.
+		 */
+		private class Receiver implements Runnable {
+			
+			/**
+			 * Ulazni kanal primatelja.
+			 */
+			private InputStream input;
+			
+			/**
+			 * Konstruktor koji stvara novog primatelja i spaja ga na ulazni kanal.
+			 * @param input ulazni kanal
+			 */
+			public Receiver(InputStream input) {
+				this.input = new BufferedInputStream(input);
+			}
+			
+			/**
+			 * Metoda obavlja posao primatelja. Hvata sve poruke koje klijent šalje na
+			 * server i obrađuje ih.
+			 */
+			public void run() {
+				try {
+					while(active) {
+						if(input.available() > 0) {
+							Message received = Message.fromStream(input);
+							
+							switch(received.getType()) {
+							case REGISTER:
+								synchronized(dispatchers) {
+									clients.put(received.getSource(), (ClientHandler) senders);
+									
+									//@DebugStart
+									System.out.println("Klijent " + received.getSource() + " se registrirao!");
+									//@DebugEnd
+
+									dispatchers.notifyAll();
+								}
+								break;
+								
+							case QUERY:
+								// TODO: Ovdje dolazi obrada poruke query
+								break;
+								
+							case LETTER:
+								//@DebugStart
+								System.out.println(received);
+								System.out.println("Stvaram novog dispečera poruke!");
+								//@DebugEnd
+																
+								new Thread(new Dispatcher(received)).start();
+								
+								break;
+							}
+						}
+						
+						Thread.yield();
+					}
+				} catch (IOException e) {
+					return;
+				} finally {
+					try {
+						input.close();
+					} catch (IOException ignorable) {
+						
+					}
+				}
+			}
+		}
+		
+		/**
+		 * Dispečer poruka klijenta klijentu. Dispečer šalje klijentu poruke namijenjene
+		 * za njega.
+		 */
+		private class Dispatcher implements Runnable {
+
+			/**
+			 * Poruka koju treba poslati.
+			 */
+			private Message toSend;
+			
+			/**
+			 * Preostali broj pokušaja slanja poruke klijentu ako on nije dostupan.
+			 */
+			private int retries;
+			
+			/**
+			 * Konstruktor novog dispečera, prima poruku koju treba dispečirati.
+			 * @param toSend poruka
+			 */
+			public Dispatcher(Message toSend) {
+				this.toSend = toSend;
+				
+				this.retries = dispatcherRetries;
+			}
+			
+			/**
+			 * Metoda obavlja posao dispečera, ako klijent kojemu treba isporučiti poruku
+			 * još nije registriran, dispečer čeka.
+			 */
+			public void run() {
+				while(!clients.containsKey(toSend.getDestination())) {
+					//@DebugStart
+					System.out.println("Drugi još nije registriran, dretva ide ninati!");
+					//@DebugEnd									
+					
+					try {
+						synchronized(dispatchers) {
+							dispatchers.wait(dispatcherTimeout);
+							
+							if(!active) break;
+							
+							retries--;
+							if(retries == 0) {
+								break;
+							}
+						}
+						
+						if(!active) break;
+					} catch (InterruptedException ignorable) {
+						
+					}
+				}
+				
+				if(!active) return;
+				
+				clients.get(toSend.getDestination()).sendMessage(toSend);				
+			}
+		}
+		
+		/**
+		 * Zastavica koja uključuje timeout pražnjenja ako je true, isključuje ga ako je false.
+		 */
+		private volatile boolean timeout = false;
+		
+		/**
+		 * Objekt preko kojeg se vrši sinhronizacija pošiljatelja.
+		 * Služi za prenijeti this u podrazrede. 
+		 * This je objekt preko kojeg se ta sinkronizacija vrši.
+		 */
+		private final Object senders = this;
+		
+		/**
+		 * Objekt preko kojeg se vrši sinhronizacija flushera.
+		 */
+		private final Object flushers = new Object();
+		
+		/**
+		 * Objekt preko kojeg se vrši sinhronizacija dispečera.
+		 */
+		private final Object dispatchers = new Object();
+		
+		/**
+		 * Klijent kojeg ovaj obrađivač obrađuje.
+		 */
+		private Socket client;
+
+		/**
+		 * Red poruka koje treba slati ovom klijentu. Ovo je zapravo buffer koji se flusha
+		 * nakon nekog intervala ili kada se treba poslati hitna poruka.
+		 */
+		private Queue<Message> messages = new LinkedList<Message>();
+		
+		/**
+		 * True ako je opsluživač aktivan, false inače. Služi za gašenje opsluživača
+		 * preko metode close()
+		 */
+		private volatile boolean active = false;
+		
+		/**
+		 * Konstruktor obrađivača, prima klijenta kojeg će obrađivati.
+		 * @param client klijent
+		 */
+		public ClientHandler(Socket client) {
+			super();
+			this.client = client;
+			this.active = true;
+			
+			//@DebugStart
+			System.out.println("Klijent " + client.getRemoteSocketAddress() + " se spojio.");
+			//@DebugEnd
+			
+			try {
+				new Thread(new Sender(client.getOutputStream())).start();
+				new Thread(new Receiver(client.getInputStream())).start();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+		
+		/**
+		 * Šalje poruku klijentu kojeg ovaj obrađivač obrađuje.
+		 * @param message poruka
+		 */
+		public synchronized void sendMessage(Message message) {
+			messages.add(message);
+						
+			if(message.isUrgent()) {
+				timeout = false;
+				
+				senders.notifyAll();
+			} else {
+				timeout = true;
+				
+				synchronized(flushers) {
+					flushers.notifyAll();
+				}
+			}
+		}
+		
+		/**
+		 * Gasi ovog opsluživača klijenta, a s njim i konekciju.
+		 */
+		public void close() {
+			active = false;
+			
+			synchronized(senders) {
+				senders.notifyAll();
+			}
+			
+			synchronized(dispatchers) {
+				dispatchers.notifyAll();
+			}
+			
+			try {
+				this.client.close();
+			} catch (Exception ignorable) {
+
+			}
+		}
+	}
+	
+	/**
+	 * Adresa na kojoj sluša server.
+	 */
+	private InetAddress bindAddress;
+	
+	/**
+	 * Port na kojem sluša server.
+	 */
+	private int port;
+	
+	/**
+	 * Vrijeme nakon kojeg ističe pokušaj hvatanja klijenta.
+	 */
+	private int socketTimeout;
+	
+	/**
+	 * Vrijeme nakon kojeg se bezuvjetno šalje paket klijentu.
+	 */
+	private int bufferTimeout;
+	
+	/**
+	 * Ciljana veličina paketa (u bajtovima) koje server šalje klijentima.
+	 */
+	private int packetSize;
+	
+	/**
+	 * Vrijeme nakon kojeg dispečer poruka pokušava ponovno slati poruku klijentu koji još
+	 * nije registriran.
+	 */
+	private int dispatcherTimeout;
+	
+	/**
+	 * Broj pokušaja slanja poruke klijentu koji još nije registriran.
+	 */
+	private int dispatcherRetries;
+	
+	/**
+	 * True ako server ovog objekta radi, false inače. Služi za gašenje servera preko metode stop().
+	 */
+	private volatile boolean running = false;
+	
+	/**
+	 * Konstruktor koji stvara novi server i služi za inicijalizaciju parametara preko
+	 * propertiesa.
+	 * @param properties parametri servera
+	 */
+	public SocketMessageServer(Properties properties) {
+		try {
+			bindAddress = InetAddress.getByName(properties.getProperty("listen.address", "0.0.0.0"));
+		} catch (UnknownHostException e) {
+			throw new IllegalArgumentException("listen.address mora biti valjana IP adresa ili postojeća domena!", e);
+		}
+		
+		port = Integer.parseInt(properties.getProperty("listen.port", "0"));
+		
+		if(port < 0 || port > 65535) {
+			throw new IllegalArgumentException("listen.port mora biti od 0 do 65535, uključivo!");
+		}
+		
+		       packetSize = parsePositive(properties, "packet.size"       ,  "512");
+		    bufferTimeout = parsePositive(properties, "buffer.timeout"    , "1000");
+		    socketTimeout = parsePositive(properties, "socket.timeout"    , "2000");
+		dispatcherTimeout = parsePositive(properties, "dispatcher.timeout", "1000");
+		dispatcherRetries = parsePositive(properties, "dispatcher.retries",    "3");
+	}
+	
+	/**
+	 * Parsira zadani property predanih propertyja koji je prirodan broj, moguće je
+	 * prosljediti i defaultnu vrijednost koja se koristi u slučaju da timeout zadanog 
+	 * imena ne postoji.
+	 * @param properties propertyji
+	 * @param propertyName ime traženog propertyja
+	 * @param defaultValue defaultna vrijednost
+	 * @return traženi property
+	 */
+	private int parsePositive(Properties properties, String propertyName, String defaultValue) {
+		try {
+			int value = Integer.parseInt(properties.getProperty(propertyName, defaultValue));
+			
+			if(value <= 0) {
+				throw new IllegalArgumentException(propertyName + " mora biti veći od 0!");
+			}
+			
+			return value;
+		} catch (NumberFormatException e) {
+			throw new IllegalArgumentException(propertyName + " mora biti cijeli broj!");
+		}
+	}
+	
+	public void start() throws ServerCannotStart, ServerCrashed {			
+		ServerSocket serverSocket = null;
+		
+		try {
+			serverSocket = new ServerSocket(port, 0, bindAddress);
+		
+			//@DebugStart
+			System.out.println("Server pokrenut na: " + serverSocket.getLocalSocketAddress());
+			//@End
+			
+			running = true;
+
+			serverSocket.setSoTimeout(socketTimeout);
+		} catch (SocketException e) {
+			throw new ServerCannotStart("Greška u TCP protokolu!", e);
+		} catch (SecurityException e) {
+			throw new ServerCannotStart("Nije dozvoljeno otvoriti socket!", e);
+		} catch (IOException e) {
+			throw new ServerCannotStart("Nije moguće otvoriti socket!", e);
+		}
+		
+		while(running) {
+			try {
+				Socket clientSocket = serverSocket.accept();
+				
+				new ClientHandler(clientSocket).start();				
+			} catch (SocketTimeoutException ignorable) {
+				
+			} catch (IOException e) {
+				throw new ServerCrashed("Server ne može primati konekcije, postojeći klijenti se i dalje opslužuju!", e);
+			}
+		}
+	}
+	
+	public void stop() {
+		running = false;
+		
+		for(Address client : clients.keySet()) {
+			clients.get(client).close();
+		}
+	}
+}

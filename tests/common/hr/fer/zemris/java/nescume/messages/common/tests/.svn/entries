@@ -1,0 +1,52 @@
+8
+
+dir
+76
+svn://aule.zemris.fer.hr/message-service/trunk/message-service/tests/common/hr/fer/zemris/java/nescume/messages/common/tests
+svn://aule.zemris.fer.hr/message-service
+
+
+
+2007-08-15T19:12:49.429734Z
+73
+Boran.Car
+
+
+svn:special svn:externals svn:needs-lock
+
+
+
+
+
+
+
+
+
+
+
+fbd0b195-8435-0410-ada1-b2317e16c895
+
+MessageTest.java
+file
+
+
+
+
+2007-08-15T17:25:15.843750Z
+4fc713f9428d3f0aba0c4aed1c7da126
+2007-08-15T19:12:49.429734Z
+73
+Boran.Car
+
+AddressTest.java
+file
+
+
+
+
+2007-07-30T07:41:18.449043Z
+7ff6f49586f18b465d0e75a896adbcc3
+2007-07-30T08:09:32.778608Z
+39
+Boran.Car
+

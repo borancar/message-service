@@ -1,0 +1,55 @@
+8
+
+dir
+76
+svn://aule.zemris.fer.hr/message-service/trunk/message-service/src/client/hr/fer/zemris/java/nescume/messages/client
+svn://aule.zemris.fer.hr/message-service
+
+
+
+2007-08-20T11:15:45.624165Z
+76
+Ivan.Kristo
+
+
+svn:special svn:externals svn:needs-lock
+
+
+
+
+
+
+
+
+
+
+
+fbd0b195-8435-0410-ada1-b2317e16c895
+
+IClientMsgService.java
+file
+
+
+
+
+2007-07-30T09:01:42.074043Z
+3cb1d7c82dcb577dd249b60166c11ec9
+2007-07-30T09:03:49.063091Z
+40
+Boran.Car
+
+exceptions
+dir
+
+ClientMsgService.java
+file
+
+
+
+
+2007-08-20T11:18:12.781250Z
+be2f647f7025146d6d6247e388e751ba
+2007-08-20T11:15:45.624165Z
+76
+Ivan.Kristo
+
